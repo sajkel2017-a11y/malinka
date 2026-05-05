@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Notatki i Kody - Zaliczenie</title>
+    <!-- Kolorowanie składni kodu -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github-dark.min.css">
+    <style>
+        :root {
+            --primary: #2ea44f;
+            --bg: #f6f8fa;
+            --text: #24292f;
+        }
+        body { font-family: -apple-system, sans-serif; line-height: 1.5; max-width: 1000px; margin: 0 auto; padding: 20px; background-color: var(--bg); color: var(--text); }
+        
+        .search-box { position: sticky; top: 10px; z-index: 100; margin-bottom: 20px; }
+        input#searchInput { width: 100%; padding: 15px; font-size: 16px; border: 2px solid #d0d7de; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); outline: none; }
+        input#searchInput:focus { border-color: var(--primary); }
+
+        .note-card { background: white; border: 1px solid #d0d7de; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }
+        .note-card h2 { margin-top: 0; font-size: 1.4rem; color: #0969da; border-bottom: 1px solid #eaecef; padding-bottom: 10px; }
+        
+        .tag { display: inline-block; background: #dafbe1; color: #1a7f37; padding: 3px 12px; border-radius: 20px; font-size: 12px; font-weight: bold; margin-bottom: 10px; }
+        
+        pre { position: relative; border-radius: 6px; overflow: hidden; margin: 15px 0; border: 1px solid #30363d; }
+        code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 14px; }
+        
+        .copy-btn { position: absolute; top: 8px; right: 8px; background: #30363d; color: #c9d1d9; border: 1px solid #444c56; padding: 5px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: 0.2s; }
+        .copy-btn:hover { background: #444c56; border-color: #768390; }
+
+        .hidden { display: none; }
+        .kb-shortcut { font-size: 11px; color: #57606a; margin-top: 5px; text-align: right; }
+    </style>
+</head>
+<body>
+
+<div class="search-box">
+    <input type="text" id="searchInput" placeholder="Szukaj kodu (np. PIR, heater, input, temp)..." onkeyup="filterNotes()">
+    <div class="kb-shortcut">Wskazówka: Użyj Ctrl+F, aby szukać tekstu na całej stronie</div>
+</div>
+
+<div id="notesContainer">
+
+    <!-- GŁÓWNY KOD ZALICZENIOWY -->
+    <div class="note-card">
+        <span class="tag">MAIN PROJECT</span>
+        <span class="tag">Python</span>
+        <span class="tag">Raspberry Pi</span>
+        <h2>System Grzewczy + PIR (Światło) + Wybór Regionu</h2>
+        <p>Pełna logika: Histereza temperatury, obsługa czujnika ruchu (PIR) przez callback, przeliczanie Kelwinów/Celsiuszy oraz walidacja progów.</p>
+        
+        <pre><button class="copy-btn" onclick="copyCode(this)">Kopiuj kod</button><code class="language-python">import time
+import pigpio
+import glob
+
+# --- KONFIGURACJA PINÓW ---
+HEATER_PIN = 17
+LIGHT_PIN = 27
+PIR_PIN = 22
+
+# Inicjalizacja pigpio
+pi = pigpio.pi()
+pi.set_mode(HEATER_PIN, pigpio.OUTPUT)
+pi.set_mode(LIGHT_PIN, pigpio.OUTPUT)
+pi.set_mode(PIR_PIN, pigpio.INPUT)
+
+# Znalezienie czujnika 1-Wire
+base_dir = '/sys/bus/w1/devices/'
+device_folder = glob.glob(base_dir + '28*')[0]
+device_file = device_folder + '/w1_slave'
+
+# --- FUNKCJE ---
+def get_temp():
+    with open(device_file, 'r') as f:
+        content = f.readlines()
+    if "YES" in content[0]:
+        return float(content[1].split("t=")[1]) / 1000.0
+    return None
+
+def pir_callback(gpio, level, tick):
+    if level == 1:  # Ruch wykryty
+        print("Wykryto ruch! Włączam światło na 10 sekund.")
+        pi.write(LIGHT_PIN, 1)
+        time.sleep(10)
+        pi.write(LIGHT_PIN, 0)
+
+# Ustawienie callbacku dla czujnika PIR
+pi.callback(PIR_PIN, pigpio.RISING_EDGE, pir_callback)
+
+# --- START PROGRAMU ---
+print("--- KONFIGURACJA SYSTEMU ---")
+region = input("Wybierz region (EU/TECH): ").upper()
+t_on = float(input("Podaj próg włączenia ogrzewania: "))
+t_off = float(input("Podaj próg wyłączenia ogrzewania: "))
+
+# Walidacja danych
+if t_on >= t_off:
+    print("BŁĄD: Próg włączenia musi być niższy niż wyłączenia!")
+    exit()
+
+# Przeliczenie dla Kelwinów
+offset = 273.15 if region == "TECH" else 0
+t_on += offset
+t_off += offset
+jednostka = "K" if region == "TECH" else "°C"
+
+print(f"System uruchomiony. Region: {region}. Zakres: {t_on:.2f} - {t_off:.2f} {jednostka}")
+
+try:
+    while True:
+        temp = get_temp()
+        if temp is not None:
+            # Konwersja na Kelwiny jeśli region TECH
+            if region == "TECH": temp += 273.15
+            print(f"Temperatura: {temp:.2f} {jednostka}")
+
+            # Logika histerezy
+            if temp < t_on:
+                pi.write(HEATER_PIN, 1) # Grzej
+            elif temp > t_off:
+                pi.write(HEATER_PIN, 0) # Przestań grzać
+        
+        time.sleep(10) # Pomiar co 10 sekund
+
+except KeyboardInterrupt:
+    print("\nZamykanie systemu...")
+finally:
+    pi.write(HEATER_PIN, 0)
+    pi.write(LIGHT_PIN, 0)
+    pi.stop()</code></pre>
+    </div>
+
+    <!-- DODATKOWA NOTATKA -->
+    <div class="note-card">
+        <span class="tag">Komendy Linux</span>
+        <h2>Przydatne komendy terminala</h2>
+        <p>Jeśli system nie widzi czujnika lub pigpio nie działa:</p>
+        <pre><code class="language-bash">sudo pigpiod                # Uruchomienie demona pigpio
+lsmod | grep w1             # Sprawdzenie modułów 1-wire
+cat /sys/bus/w1/devices/28*/w1_slave  # Ręczny odczyt temperatury</code></pre>
+    </div>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+<script>
+    hljs.highlightAll();
+
+    function filterNotes() {
+        let input = document.getElementById('searchInput').value.toLowerCase();
+        let cards = document.querySelectorAll('.note-card');
+        cards.forEach(card => {
+            let text = card.innerText.toLowerCase();
+            card.classList.toggle('hidden', !text.includes(input));
+        });
+    }
+
+    function copyCode(btn) {
+        const code = btn.nextElementSibling.innerText;
+        navigator.clipboard.writeText(code).then(() => {
+            const originalText = btn.innerText;
+            btn.innerText = "SKOPIOWANO!";
+            btn.style.background = "#2ea44f";
+            setTimeout(() => { 
+                btn.innerText = originalText; 
+                btn.style.background = "#30363d";
+            }, 2000);
+        });
+    }
+</script>
+
+</body>
+</html>
